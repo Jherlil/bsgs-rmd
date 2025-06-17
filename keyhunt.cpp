@@ -37,6 +37,7 @@ email: albertobsd@gmail.com
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/random.h>
+#include <sys/mman.h>
 #endif
 
 #ifdef __unix__
@@ -615,7 +616,10 @@ int main(int argc, char **argv)	{
                         case 'k':
                                 if(FLAGMODE == MODE_RMD160_BSGS){
                                         RMD160_BSGS_BITS = strtoul(optarg,NULL,10);
-                                        if(RMD160_BSGS_BITS > 31) RMD160_BSGS_BITS = 31;
+                                        if(RMD160_BSGS_BITS > 63){
+                                                fprintf(stderr,"[W] value too big for -k, capped to 63\n");
+                                                RMD160_BSGS_BITS = 63;
+                                        }
                                         RMD160_BSGS_TABLE_SIZE = 1ULL << RMD160_BSGS_BITS;
                                         printf("[+] Table size 2^%u entries\n",RMD160_BSGS_BITS);
                                 }else{
@@ -763,6 +767,7 @@ int main(int argc, char **argv)	{
 				if(NTHREADS <= 0)	{
 					NTHREADS = 1;
 				}
+                                omp_set_num_threads(NTHREADS);
 				printf((NTHREADS > 1) ? "[+] Threads : %u\n": "[+] Thread : %u\n",NTHREADS);
 			break;
 			case 'v':
@@ -6796,12 +6801,22 @@ void *thread_process_rmd160_bsgs(void *vargp) {
         inc.Mult(&tmp);
         struct rmd160_entry *table = (struct rmd160_entry*)malloc(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
         checkpointer((void*)table,__FILE__,"malloc","rmd160_table",__LINE__-1);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        VirtualLock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#else
+        mlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#endif
         while(key.IsLowerOrEqual(&n_range_end)){
                 generate_block(&key,RMD160_BSGS_TABLE_SIZE,table);
                 compare_block(table,RMD160_BSGS_TABLE_SIZE);
                 key.Add(&inc);
                 steps[thread_number]+=RMD160_BSGS_TABLE_SIZE;
         }
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        VirtualUnlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#else
+        munlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#endif
         free(table);
         ends[thread_number] = 1;
         return NULL;
