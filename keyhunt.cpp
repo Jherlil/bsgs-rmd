@@ -33,6 +33,7 @@ email: albertobsd@gmail.com
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
 #include <windows.h>
+#include <malloc.h>
 #else
 #include <unistd.h>
 #include <pthread.h>
@@ -6766,15 +6767,30 @@ void generate_block(Int *start,uint64_t count,struct rmd160_entry *table){
 
 void compare_block(struct rmd160_entry *table,uint64_t count){
         char address[40];
+        if(NTHREADS == 1){
 #pragma omp parallel for schedule(static)
-        for(uint64_t i = 0; i < count; i++){
-                if(bloom_check(&bloom,table[i].hash,20)){
-                        if(searchbinary(addressTable,(char*)table[i].hash,N)){
-                                Int key;
-                                key.Set32Bytes(table[i].priv);
-                                rmd160toaddress_dst((char*)table[i].hash,address);
+                for(uint64_t i = 0; i < count; i++){
+                        if(bloom_check(&bloom,table[i].hash,20)){
+                                if(searchbinary(addressTable,(char*)table[i].hash,N)){
+                                        Int key;
+                                        key.Set32Bytes(table[i].priv);
+                                        rmd160toaddress_dst((char*)table[i].hash,address);
 #pragma omp critical
-                                {
+                                        {
+                                                char *keyhex = key.GetBase16();
+                                                printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
+                                                free(keyhex);
+                                        }
+                                }
+                        }
+                }
+        }else{
+                for(uint64_t i = 0; i < count; i++){
+                        if(bloom_check(&bloom,table[i].hash,20)){
+                                if(searchbinary(addressTable,(char*)table[i].hash,N)){
+                                        Int key;
+                                        key.Set32Bytes(table[i].priv);
+                                        rmd160toaddress_dst((char*)table[i].hash,address);
                                         char *keyhex = key.GetBase16();
                                         printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
                                         free(keyhex);
@@ -6791,6 +6807,8 @@ void *thread_process_rmd160_bsgs(void *vargp) {
         struct tothread *tt = (struct tothread*)vargp;
         int thread_number = tt->nt;
         free(tt);
+        if(NTHREADS > 1)
+                omp_set_num_threads(1);
         Int key,offset,inc;
         offset.SetInt64(RMD160_BSGS_TABLE_SIZE);
         offset.Mult((uint64_t)thread_number);
@@ -6799,8 +6817,15 @@ void *thread_process_rmd160_bsgs(void *vargp) {
         inc.SetInt64(RMD160_BSGS_TABLE_SIZE);
         Int tmp; tmp.SetInt32(NTHREADS);
         inc.Mult(&tmp);
-        struct rmd160_entry *table = (struct rmd160_entry*)malloc(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        struct rmd160_entry *table = (struct rmd160_entry*)_aligned_malloc(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE,64);
+#else
+        struct rmd160_entry *table = NULL;
+        if(posix_memalign((void**)&table,64,sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE))
+                table = NULL;
+#endif
         checkpointer((void*)table,__FILE__,"malloc","rmd160_table",__LINE__-1);
+        printf("[+] Thread %d allocating %.2f MB for rmd160-bsgs table\n",thread_number,(double)(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE)/1048576.0);
 #if defined(_WIN64) && !defined(__CYGWIN__)
         VirtualLock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
 #else
