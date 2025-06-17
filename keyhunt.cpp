@@ -33,10 +33,12 @@ email: albertobsd@gmail.com
 #if defined(_WIN64) && !defined(__CYGWIN__)
 #include "getopt.h"
 #include <windows.h>
+#include <malloc.h>
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/random.h>
+#include <sys/mman.h>
 #endif
 
 #ifdef __unix__
@@ -587,11 +589,11 @@ int main(int argc, char **argv)	{
 					exit(EXIT_FAILURE);
 				}
 				
-			break;
-                                        if(RMD160_BSGS_BITS > 63) RMD160_BSGS_BITS = 63;
-                                        }
-				printf("[+] Flag DEBUG enabled\n");
-			break;
+                        break;
+                        case 'd':
+                                FLAGDEBUG = 1;
+                                printf("[+] Flag DEBUG enabled\n");
+                        break;
 			case 'e':
 				FLAGENDOMORPHISM = 1;
 				printf("[+] Endomorphism enabled\n");
@@ -615,7 +617,10 @@ int main(int argc, char **argv)	{
                         case 'k':
                                 if(FLAGMODE == MODE_RMD160_BSGS){
                                         RMD160_BSGS_BITS = strtoul(optarg,NULL,10);
-                                        if(RMD160_BSGS_BITS > 31) RMD160_BSGS_BITS = 31;
+                                        if(RMD160_BSGS_BITS > 63){
+                                                fprintf(stderr,"[W] value too big for -k, capped to 63\n");
+                                                RMD160_BSGS_BITS = 63;
+                                        }
                                         RMD160_BSGS_TABLE_SIZE = 1ULL << RMD160_BSGS_BITS;
                                         printf("[+] Table size 2^%u entries\n",RMD160_BSGS_BITS);
                                 }else{
@@ -763,6 +768,7 @@ int main(int argc, char **argv)	{
 				if(NTHREADS <= 0)	{
 					NTHREADS = 1;
 				}
+                                omp_set_num_threads(NTHREADS);
 				printf((NTHREADS > 1) ? "[+] Threads : %u\n": "[+] Thread : %u\n",NTHREADS);
 			break;
 			case 'v':
@@ -5741,7 +5747,6 @@ void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
   sha256sse_1B(b0, b1, b2, b3, dst0, dst1, dst2, dst3);
 }
 
-
 #define BUFFMINIKEYCHECK(buff,src) \
 (buff)[ 0] = (uint32_t)src[ 0] << 24 | (uint32_t)src[ 1] << 16 | (uint32_t)src[ 2] << 8 | (uint32_t)src[ 3]; \
 (buff)[ 1] = (uint32_t)src[ 4] << 24 | (uint32_t)src[ 5] << 16 | (uint32_t)src[ 6] << 8 | (uint32_t)src[ 7]; \
@@ -5756,10 +5761,10 @@ void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
 (buff)[10] = 0; \
 (buff)[11] = 0; \
 (buff)[12] = 0; \
-        printf("-k value    In bsgs mode this is the factor for M; in rmd160-bsgs it\n");
-        printf("            sets the table to 2^value entries. Use high numbers with care.\n");
+(buff)[13] = 0; \
 (buff)[14] = 0; \
-(buff)[15] = 0xB8;	//184 bits => 23 BYTES
+(buff)[15] = 0xB8;      //184 bits => 23 BYTES
+
 
 void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3)	{
   uint32_t b0[16];
@@ -6762,21 +6767,34 @@ void generate_block(Int *start,uint64_t count,struct rmd160_entry *table){
 
 void compare_block(struct rmd160_entry *table,uint64_t count){
         char address[40];
+        if(NTHREADS == 1){
 #pragma omp parallel for schedule(static)
-        for(uint64_t i = 0; i < count; i++){
-                if(bloom_check(&bloom,table[i].hash,20)){
-                        if(searchbinary(addressTable,(char*)table[i].hash,N)){
-                                Int key;
-                                key.Set32Bytes(table[i].priv);
-        size_t req = sizeof(struct rmd160_entry) * RMD160_BSGS_TABLE_SIZE;
-        struct rmd160_entry *table = (struct rmd160_entry*)malloc(req);
-                                rmd160toaddress_dst((char*)table[i].hash,address);
-        printf("[+] Thread %d allocating %.2f MB for rmd160-bsgs table\n",thread_number, (double)req/1048576.0);
+                for(uint64_t i = 0; i < count; i++){
+                        if(bloom_check(&bloom,table[i].hash,20)){
+                                if(searchbinary(addressTable,(char*)table[i].hash,N)){
+                                        Int key;
+                                        key.Set32Bytes(table[i].priv);
+                                        rmd160toaddress_dst((char*)table[i].hash,address);
 #pragma omp critical
-                                {
-                                        printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
+                                        {
+                                                char *keyhex = key.GetBase16();
+                                                printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
+                                                free(keyhex);
+                                        }
                                 }
-                                free(keyhex);
+                        }
+                }
+        }else{
+                for(uint64_t i = 0; i < count; i++){
+                        if(bloom_check(&bloom,table[i].hash,20)){
+                                if(searchbinary(addressTable,(char*)table[i].hash,N)){
+                                        Int key;
+                                        key.Set32Bytes(table[i].priv);
+                                        rmd160toaddress_dst((char*)table[i].hash,address);
+                                        char *keyhex = key.GetBase16();
+                                        printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
+                                        free(keyhex);
+                                }
                         }
                 }
         }
@@ -6789,6 +6807,8 @@ void *thread_process_rmd160_bsgs(void *vargp) {
         struct tothread *tt = (struct tothread*)vargp;
         int thread_number = tt->nt;
         free(tt);
+        if(NTHREADS > 1)
+                omp_set_num_threads(1);
         Int key,offset,inc;
         offset.SetInt64(RMD160_BSGS_TABLE_SIZE);
         offset.Mult((uint64_t)thread_number);
@@ -6797,14 +6817,31 @@ void *thread_process_rmd160_bsgs(void *vargp) {
         inc.SetInt64(RMD160_BSGS_TABLE_SIZE);
         Int tmp; tmp.SetInt32(NTHREADS);
         inc.Mult(&tmp);
-        struct rmd160_entry *table = (struct rmd160_entry*)malloc(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        struct rmd160_entry *table = (struct rmd160_entry*)_aligned_malloc(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE,64);
+#else
+        struct rmd160_entry *table = NULL;
+        if(posix_memalign((void**)&table,64,sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE))
+                table = NULL;
+#endif
         checkpointer((void*)table,__FILE__,"malloc","rmd160_table",__LINE__-1);
+        printf("[+] Thread %d allocating %.2f MB for rmd160-bsgs table\n",thread_number,(double)(sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE)/1048576.0);
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        VirtualLock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#else
+        mlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#endif
         while(key.IsLowerOrEqual(&n_range_end)){
                 generate_block(&key,RMD160_BSGS_TABLE_SIZE,table);
                 compare_block(table,RMD160_BSGS_TABLE_SIZE);
                 key.Add(&inc);
                 steps[thread_number]+=RMD160_BSGS_TABLE_SIZE;
         }
+#if defined(_WIN64) && !defined(__CYGWIN__)
+        VirtualUnlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#else
+        munlock(table, sizeof(struct rmd160_entry)*RMD160_BSGS_TABLE_SIZE);
+#endif
         free(table);
         ends[thread_number] = 1;
         return NULL;
