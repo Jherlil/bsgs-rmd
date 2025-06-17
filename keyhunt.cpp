@@ -587,11 +587,11 @@ int main(int argc, char **argv)	{
 					exit(EXIT_FAILURE);
 				}
 				
-			break;
-                                        if(RMD160_BSGS_BITS > 63) RMD160_BSGS_BITS = 63;
-                                        }
-				printf("[+] Flag DEBUG enabled\n");
-			break;
+                        break;
+                        case 'd':
+                                FLAGDEBUG = 1;
+                                printf("[+] Flag DEBUG enabled\n");
+                        break;
 			case 'e':
 				FLAGENDOMORPHISM = 1;
 				printf("[+] Endomorphism enabled\n");
@@ -5741,7 +5741,6 @@ void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
   sha256sse_1B(b0, b1, b2, b3, dst0, dst1, dst2, dst3);
 }
 
-
 #define BUFFMINIKEYCHECK(buff,src) \
 (buff)[ 0] = (uint32_t)src[ 0] << 24 | (uint32_t)src[ 1] << 16 | (uint32_t)src[ 2] << 8 | (uint32_t)src[ 3]; \
 (buff)[ 1] = (uint32_t)src[ 4] << 24 | (uint32_t)src[ 5] << 16 | (uint32_t)src[ 6] << 8 | (uint32_t)src[ 7]; \
@@ -5756,10 +5755,10 @@ void sha256sse_22(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, ui
 (buff)[10] = 0; \
 (buff)[11] = 0; \
 (buff)[12] = 0; \
-        printf("-k value    In bsgs mode this is the factor for M; in rmd160-bsgs it\n");
-        printf("            sets the table to 2^value entries. Use high numbers with care.\n");
+(buff)[13] = 0; \
 (buff)[14] = 0; \
-(buff)[15] = 0xB8;	//184 bits => 23 BYTES
+(buff)[15] = 0xB8;      //184 bits => 23 BYTES
+
 
 void sha256sse_23(uint8_t *src0, uint8_t *src1, uint8_t *src2, uint8_t *src3, uint8_t *dst0, uint8_t *dst1, uint8_t *dst2, uint8_t *dst3)	{
   uint32_t b0[16];
@@ -6768,15 +6767,13 @@ void compare_block(struct rmd160_entry *table,uint64_t count){
                         if(searchbinary(addressTable,(char*)table[i].hash,N)){
                                 Int key;
                                 key.Set32Bytes(table[i].priv);
-        size_t req = sizeof(struct rmd160_entry) * RMD160_BSGS_TABLE_SIZE;
-        struct rmd160_entry *table = (struct rmd160_entry*)malloc(req);
                                 rmd160toaddress_dst((char*)table[i].hash,address);
-        printf("[+] Thread %d allocating %.2f MB for rmd160-bsgs table\n",thread_number, (double)req/1048576.0);
 #pragma omp critical
                                 {
+                                        char *keyhex = key.GetBase16();
                                         printf("\n[+] HIT privkey %s address %s\n",keyhex,address);
+                                        free(keyhex);
                                 }
-                                free(keyhex);
                         }
                 }
         }
